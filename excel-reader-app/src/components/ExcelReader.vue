@@ -13,6 +13,7 @@ const ACCEPTED_EXTENSIONS = ['.xlsx', '.xls'];
 const STORAGE_KEY = 'excel-reader-cache';
 const MAX_CACHE_ROWS_PER_SHEET = 500;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB is a safe browser limit
+const MAX_H_ROWS = 100;
 
 const dragActive = ref(false);
 const dragDepth = ref(0);
@@ -27,7 +28,6 @@ const fileInput = ref(null);
 
 const isBusy = computed(() => status.value === 'loading');
 const hasData = computed(() => sheets.value.length > 0);
-const canDownload = computed(() => hasData.value && !isBusy.value);
 
 const statusChip = computed(() => {
   switch (status.value) {
@@ -158,22 +158,21 @@ function processFile(file) {
   reader.onload = (event) => {
     try {
       const buffer = event.target?.result;
+
       const workbook = XLSX.read(buffer, { type: 'array' });
       const workbookSheets = workbook.SheetNames.map((name) => ({
         name,
-        rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], {
-          header: 1,
-          blankrows: false,
-          defval: ''
-        })
+        rows: extractSheetRows(workbook.Sheets[name])
       }));
 
-      if (!workbookSheets.length) {
+      if (!workbookSheets.some((sheet) => sheet.rows.length)) {
         throw new Error('EMPTY_WORKBOOK');
       }
 
       sheets.value = workbookSheets;
-      selectedSheet.value = workbookSheets[0].name;
+      const initialSheet =
+        workbookSheets.find((sheet) => sheet.rows.length) ?? workbookSheets[0];
+      selectedSheet.value = initialSheet?.name ?? '';
       fileInfo.value = {
         name: file.name,
         size: file.size,
@@ -196,6 +195,94 @@ function processFile(file) {
   reader.readAsArrayBuffer(file);
 }
 
+
+// Limit JSON conversion to the actual used cells to avoid iterating millions of blanks.
+function extractSheetRows(sheet) {
+  if (!sheet) {
+    return [];
+  }
+  const bounds = getSheetValueBounds(sheet);
+  if (!bounds) {
+    return [];
+  }
+
+  const jsonOptions = {
+    header: 1,
+    blankrows: true,
+    defval: '',
+    range: XLSX.utils.encode_range(bounds)
+  };
+  const rows = XLSX.utils.sheet_to_json(sheet, jsonOptions);
+  return trimTrailingEmptyRows(rows);
+}
+
+function getSheetValueBounds(sheet) {
+  if (!sheet) {
+    return null;
+  }
+  const cellAddresses = Object.keys(sheet).filter((address) => !address.startsWith('!'));
+  if (!cellAddresses.length) {
+    return null;
+  }
+
+  let minRow = Infinity;
+  let maxRow = -1;
+  let minCol = Infinity;
+  let maxCol = -1;
+  let hasContent = false;
+
+  cellAddresses.forEach((address) => {
+    const cell = sheet[address];
+    const value = cell?.v ?? cell?.w;
+    if (!hasMeaningfulCellValue(value)) {
+      return;
+    }
+    hasContent = true;
+    const { r, c } = XLSX.utils.decode_cell(address);
+    if (r < minRow) minRow = r;
+    if (r > maxRow) maxRow = r;
+    if (c < minCol) minCol = c;
+    if (c > maxCol) maxCol = c;
+  });
+
+  if (!hasContent || !Number.isFinite(minRow) || !Number.isFinite(minCol)) {
+    return null;
+  }
+
+  return {
+    s: { r: minRow, c: minCol },
+    e: { r: Math.max(maxRow, minRow), c: Math.max(maxCol, minCol) }
+  };
+}
+
+function hasMeaningfulCellValue(value) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value);
+  }
+  if (typeof value === 'boolean') {
+    return true;
+  }
+  return String(value).trim() !== '';
+}
+
+function trimTrailingEmptyRows(rows) {
+  let endIndex = rows.length - 1;
+  while (endIndex >= 0 && !rowHasMeaningfulData(rows[endIndex])) {
+    endIndex -= 1;
+  }
+  return endIndex >= 0 ? rows.slice(0, endIndex + 1) : [];
+}
+
+function rowHasMeaningfulData(row) {
+  if (!Array.isArray(row)) {
+    return false;
+  }
+  return row.some((cell) => hasMeaningfulCellValue(cell));
+}
+
 function setError(message) {
   errorMessage.value = message;
   status.value = 'error';
@@ -211,40 +298,6 @@ function resetAll() {
   lastUpdated.value = null;
   clearCache();
   emit('result-generated', '');
-}
-
-function downloadJSON() {
-  if (!canDownload.value) return;
-  const payload = {
-    generatedAt: new Date().toISOString(),
-    file: fileInfo.value,
-    sheet: currentSheet.value?.name ?? '',
-    rows: currentRows.value
-  };
-  triggerDownload(
-    `${(fileInfo.value?.name ?? 'excel-data').replace(/\.[^.]+$/, '')}.json`,
-    new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-  );
-}
-
-function downloadCSV() {
-  if (!canDownload.value || !currentRows.value.length) return;
-  const worksheet = XLSX.utils.aoa_to_sheet(currentRows.value);
-  const csv = XLSX.utils.sheet_to_csv(worksheet);
-  triggerDownload(
-    `${currentSheet.value?.name ?? 'worksheet'}.csv`,
-    new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  );
-}
-
-function triggerDownload(filename, blob) {
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(link.href);
 }
 
 function formatBytes(bytes) {
@@ -277,78 +330,97 @@ function buildResultText(info, workbookSheets) {
     return sections
       .map((entry) => (shouldShowSheetLabel ? `【${entry.name}】
 ${entry.content}` : entry.content))
-      .join('\n\n');
+      .join('\n');
   }
 
   return info ? `未能从 ${info.name} 解析出符合规则的内容。` : '';
 }
 
+
+
 function buildSectionFromSheet(sheet) {
-  const rows = sheet.rows ?? [];
+  const rows = (sheet.rows ?? []).slice(0, MAX_H_ROWS);
   const H_INDEX = 7;
   const I_INDEX = 8;
 
-  let dateRowIndex = -1;
-  let dateLabel = '';
-
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-    const candidate = rows[rowIndex]?.[H_INDEX];
-    if (looksLikeDateCell(candidate)) {
-      dateLabel = formatDateLabel(candidate);
-      dateRowIndex = rowIndex;
-      break;
-    }
-  }
-
-  if (!dateLabel) {
+  if (!rows.length) {
     return '';
   }
 
-  let headerRowIndex = -1;
-  if (dateRowIndex > 0) {
-    for (let rowIndex = dateRowIndex - 1; rowIndex >= 0; rowIndex -= 1) {
-      const candidateRow = rows[rowIndex] ?? [];
-      const hasStoreLabel = candidateRow
-        .slice(I_INDEX)
-        .some((cell) => sanitizeHeaderCell(cell));
-      if (hasStoreLabel) {
-        headerRowIndex = rowIndex;
-        break;
-      }
-    }
-  }
-  if (headerRowIndex === -1 && dateRowIndex > 0) {
-    headerRowIndex = dateRowIndex - 1;
-  }
-  const headerRow = headerRowIndex >= 0 ? rows[headerRowIndex] ?? [] : [];
-  const stores = [];
+  const hValues = rows.map((row) => sanitizeText(row?.[H_INDEX]));
+  const firstRowIndex = hValues.findIndex(Boolean);
+  const lastHValueRow = findLastIndex(hValues, Boolean);
+  const maxRangeRow = Math.min(rows.length - 1, MAX_H_ROWS - 1);
+  const lastRowIndex = Math.max(lastHValueRow, maxRangeRow);
 
-  if (headerRow.length) {
-    for (let colIndex = I_INDEX; colIndex < headerRow.length; colIndex += 1) {
-      const label = sanitizeHeaderCell(headerRow[colIndex]);
-      if (!label) {
-        break;
-      }
-      stores.push({ name: label, columnIndex: colIndex, items: [] });
-    }
+  if (firstRowIndex === -1 || lastRowIndex === -1) {
+    return '';
   }
 
+  const sections = [];
+  let cursor = firstRowIndex;
+
+  while (cursor <= lastRowIndex) {
+    const dateRowIndex = findNextDateRow(rows, cursor, lastRowIndex, H_INDEX);
+    if (dateRowIndex === -1) {
+      break;
+    }
+
+    const block = buildBlockFromDate(rows, dateRowIndex, lastRowIndex, H_INDEX, I_INDEX);
+    if (block.content) {
+      sections.push(block.content);
+    }
+    cursor = Math.max(block.nextRow ?? dateRowIndex + 1, dateRowIndex + 1);
+  }
+
+  if (!sections.length) {
+    return '';
+  }
+
+  const rangeLabel = `H列范围：H${firstRowIndex + 1} - H${lastRowIndex + 1}`;
+  return [rangeLabel, ...sections].join('\n').trim();
+}
+
+function findNextDateRow(rows, start, end, hIndex) {
+  for (let rowIndex = start; rowIndex <= end; rowIndex += 1) {
+    if (looksLikeDateCell(rows[rowIndex]?.[hIndex])) {
+      return rowIndex;
+    }
+  }
+  return -1;
+}
+
+function buildBlockFromDate(rows, dateRowIndex, lastRowIndex, H_INDEX, I_INDEX) {
+  const dateLabel = formatDateLabel(rows[dateRowIndex]?.[H_INDEX]);
+  if (!dateLabel) {
+    return { content: '', nextRow: dateRowIndex + 1 };
+  }
+
+  const headerRowIndex = findHeaderRowIndex(rows, dateRowIndex, I_INDEX);
+  const stores = extractStores(rows, headerRowIndex, I_INDEX);
   if (!stores.length) {
-    return dateLabel;
+    return { content: dateLabel, nextRow: dateRowIndex + 1 };
   }
 
   let hasStartedProducts = false;
+  let nextRowPointer = dateRowIndex + 1;
 
-  for (let rowIndex = dateRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
-    const productName = sanitizeProductName(rows[rowIndex]?.[H_INDEX]);
+  for (let rowIndex = dateRowIndex + 1; rowIndex <= lastRowIndex; rowIndex += 1) {
+    const cellValue = rows[rowIndex]?.[H_INDEX];
+
+    if (looksLikeDateCell(cellValue)) {
+      nextRowPointer = rowIndex;
+      break;
+    }
+
+    const productName = sanitizeProductName(cellValue);
     if (!productName) {
-      if (hasStartedProducts) {
-        break;
-      }
+      nextRowPointer = rowIndex + 1;
       continue;
     }
 
     hasStartedProducts = true;
+    nextRowPointer = rowIndex + 1;
 
     stores.forEach((store) => {
       const quantity = parseQuantityValue(rows[rowIndex]?.[store.columnIndex]);
@@ -358,16 +430,64 @@ function buildSectionFromSheet(sheet) {
     });
   }
 
-  const lines = [dateLabel];
+  if (nextRowPointer <= dateRowIndex + 1) {
+    nextRowPointer = lastRowIndex + 1;
+  }
 
   const storeSections = stores
     .filter((store) => store.items.length)
     .map((store) => {
-      const entries = store.items.map((item) => `- ${item.name}：${formatQuantity(item.quantity)} pcs`).join('\n');
-      return `${store.name}\n${entries}`;
+      const entries = store.items
+        .map((item) => `- ${item.name}：${formatQuantity(item.quantity)} pcs`)
+        .join('\n');
+      return `${store.name}
+${entries}`;
     });
 
-  return [dateLabel, ...storeSections].join('\n').trim();
+  const content = [dateLabel, ...storeSections].join('\n').trim();
+
+  return { content, nextRow: nextRowPointer };
+}
+
+function findHeaderRowIndex(rows, dateRowIndex, I_INDEX) {
+  if (dateRowIndex <= 0) {
+    return -1;
+  }
+  for (let rowIndex = dateRowIndex - 1; rowIndex >= 0; rowIndex -= 1) {
+    const candidateRow = rows[rowIndex] ?? [];
+    const hasStoreLabel = candidateRow.slice(I_INDEX).some((cell) => sanitizeHeaderCell(cell));
+    if (hasStoreLabel) {
+      return rowIndex;
+    }
+  }
+  return dateRowIndex - 1;
+}
+
+function extractStores(rows, headerRowIndex, I_INDEX) {
+  if (headerRowIndex < 0) {
+    return [];
+  }
+  const headerRow = rows[headerRowIndex] ?? [];
+  const stores = [];
+
+  for (let colIndex = I_INDEX; colIndex < headerRow.length; colIndex += 1) {
+    const label = sanitizeHeaderCell(headerRow[colIndex]);
+    if (!label) {
+      break;
+    }
+    stores.push({ name: label, columnIndex: colIndex, items: [] });
+  }
+
+  return stores;
+}
+
+function findLastIndex(array, predicate) {
+  for (let index = array.length - 1; index >= 0; index -= 1) {
+    if (predicate(array[index])) {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function looksLikeDateCell(value) {
@@ -630,27 +750,9 @@ onMounted(() => {
         />
       </label>
 
-      <div class="sheet-tools__actions">
-        <button
-          class="btn btn--primary"
-          type="button"
-          @click="downloadCSV"
-          :disabled="!canDownload"
-        >
-          导出 CSV
-        </button>
-        <button
-          class="btn btn--secondary"
-          type="button"
-          @click="downloadJSON"
-          :disabled="!canDownload"
-        >
-          导出 JSON
-        </button>
-        <button class="btn btn--ghost" type="button" @click="resetAll">
-          清除
-        </button>
-      </div>
+      <button class="btn btn--ghost" type="button" @click="resetAll">
+        清除
+      </button>
     </section>
 
     <div v-if="hasData" class="table-wrapper">

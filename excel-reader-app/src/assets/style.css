@@ -306,11 +306,6 @@ h1, h2, h3, h4 {
   background: var(--surface-muted);
 }
 
-.sheet-tools__actions {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
 
 .btn {
   border: none;
