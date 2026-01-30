@@ -17,21 +17,33 @@
     </header>
 
     <main class="content-area">
-      <ExcelReader />
+      <ExcelReader @result-generated="handleResultText" />
 
       <section class="guide-card" aria-labelledby="guide-title">
-        <div class="guide-card__header">
-          <p class="eyebrow">流程提醒</p>
-          <h2 id="guide-title">操作指南</h2>
-          <p>依照以下步骤即可在几秒钟内完成 Excel 在线查看与导出。</p>
-        </div>
-        <ol class="guide-list">
-          <li><strong>准备文件。</strong> 支持 Office 及 WPS 导出的 .xlsx / .xls 单文件。</li>
-          <li><strong>拖拽或点击上传。</strong> 文件体积建议控制在 5 MB 以内以获得最佳体验。</li>
-          <li><strong>等待解析。</strong> SheetJS 在浏览器内完成解码，不会上传到服务器。</li>
-          <li><strong>筛选与导出。</strong> 可搜索关键字、切换工作表，并导出 JSON 或 CSV。</li>
-          <li><strong>重置。</strong> 需要重新开始时点击重置即可清理缓存及本地存储。</li>
-        </ol>
+        <header class="guide-card__header">
+          <div>
+            <p class="eyebrow">数据摘要</p>
+            <h2 id="guide-title">转换结果</h2>
+            <p>解析成功后会在此生成一份标准文案，可复制给其他同事或粘贴进工单。</p>
+          </div>
+          <button
+            type="button"
+            class="copy-btn"
+            :class="{ 'copy-btn--success': copySuccess }"
+            :disabled="!resultText"
+            @click="copyResult"
+          >
+            {{ copySuccess ? '已复制' : '复制' }}
+          </button>
+        </header>
+        <textarea
+          :value="resultText"
+          class="guide-card__editor"
+          rows="16"
+          aria-label="转换结果文本"
+          placeholder="解析 Excel 后将在此生成标准文本，方便复制分享。"
+          readonly
+        ></textarea>
       </section>
     </main>
 
@@ -42,5 +54,32 @@
 </template>
 
 <script setup>
+import { ref } from 'vue';
 import ExcelReader from './components/ExcelReader.vue';
+
+const resultText = ref('');
+const copySuccess = ref(false);
+let copyTimer;
+
+function handleResultText(text) {
+  resultText.value = text ?? '';
+  copySuccess.value = false;
+  clearTimeout(copyTimer);
+}
+
+async function copyResult() {
+  if (!resultText.value) return;
+  try {
+    await navigator.clipboard.writeText(resultText.value);
+    copySuccess.value = true;
+  } catch (error) {
+    copySuccess.value = false;
+    console.error('复制失败', error);
+  } finally {
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
+      copySuccess.value = false;
+    }, 2000);
+  }
+}
 </script>

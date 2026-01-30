@@ -3,6 +3,8 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import * as XLSX from 'xlsx';
 
+const emit = defineEmits(['result-generated']);
+
 const ACCEPTED_TYPES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel'
@@ -182,6 +184,7 @@ function processFile(file) {
       lastUpdated.value = new Date();
       status.value = 'ready';
       persistState();
+      emit('result-generated', buildResultText(fileInfo.value, workbookSheets));
     } catch (error) {
       console.error(error);
       setError('解析 Excel 文件时出现问题，请检查文件后重试。');
@@ -207,6 +210,7 @@ function resetAll() {
   errorMessage.value = '';
   lastUpdated.value = null;
   clearCache();
+  emit('result-generated', '');
 }
 
 function downloadJSON() {
@@ -254,6 +258,29 @@ function formatBytes(bytes) {
   }
   const value = size >= 10 || unitIndex === 0 ? Math.round(size) : size.toFixed(1);
   return `${value} ${units[unitIndex]}`;
+}
+
+function buildResultText(info, workbookSheets) {
+  if (!info || !workbookSheets?.length) {
+    return '';
+  }
+  const sheetSummary = workbookSheets
+    .map((sheet, index) => {
+      const rowCount = Math.max(sheet.rows.length - 1, 0);
+      const columnCount = sheet.rows[0]?.length ?? 0;
+      return `${index + 1}. ${sheet.name}：${rowCount} 行，${columnCount} 列`;
+    })
+    .join('\n');
+  return [
+    '【Excel 解析结果】',
+    `文件：${info.name}`,
+    `大小：${info.sizeLabel}`,
+    `工作表：${info.sheetCount} 个`,
+    `最近修改：${info.lastModifiedLabel}`,
+    '',
+    '工作表概览：',
+    sheetSummary || '无可展示的数据。'
+  ].join('\n');
 }
 
 function formatCell(value) {
@@ -305,6 +332,7 @@ function restoreFromStorage() {
     status.value = 'ready';
     searchTerm.value = '';
     lastUpdated.value = payload.timestamp ? new Date(payload.timestamp) : null;
+    emit('result-generated', buildResultText(fileInfo.value, sheets.value));
   } catch (error) {
     console.warn('读取本地缓存失败', error);
   }
