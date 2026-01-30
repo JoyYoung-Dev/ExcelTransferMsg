@@ -694,104 +694,11 @@ onMounted(() => {
     </div>
 
     <div class="status-panel" v-if="status === 'loading'">
-      <p>文件正在解析，通常只需数秒。</p>
+      <p>�-؄��-��o"���z?��O�?s�,,�?��o?���'a?,</p>
     </div>
     <div class="status-panel status-panel--error" v-if="errorMessage">
       <p>{{ errorMessage }}</p>
     </div>
 
-    <section class="file-summary" v-if="fileInfo">
-      <div class="file-summary__grid">
-        <article>
-          <span class="label">文件名</span>
-          <p>{{ fileInfo.name }}</p>
-        </article>
-        <article>
-          <span class="label">大小</span>
-          <p>{{ fileInfo.sizeLabel }}</p>
-        </article>
-        <article>
-          <span class="label">工作表</span>
-          <p>{{ fileInfo.sheetCount }} 个</p>
-        </article>
-        <article>
-          <span class="label">最近修改</span>
-          <p>{{ fileInfo.lastModifiedLabel }}</p>
-        </article>
-      </div>
-      <div class="file-summary__meta">
-        <p v-if="lastUpdatedText">解析时间：{{ lastUpdatedText }}</p>
-        <button class="btn btn--ghost" type="button" @click="resetAll">
-          重置
-        </button>
-      </div>
-    </section>
-
-    <section v-if="hasData" class="sheet-tools" aria-label="数据工具栏">
-      <label class="field">
-        <span>工作表</span>
-        <select v-model="selectedSheet">
-          <option
-            v-for="option in sheetOptions"
-            :key="option.value"
-            :value="option.value"
-          >
-            {{ option.label }}
-          </option>
-        </select>
-      </label>
-
-      <label class="field">
-        <span>关键字筛选</span>
-        <input
-          type="search"
-          v-model.trim="searchTerm"
-          placeholder="输入任意文本以过滤"
-        />
-      </label>
-
-      <button class="btn btn--ghost" type="button" @click="resetAll">
-        清除
-      </button>
-    </section>
-
-    <div v-if="hasData" class="table-wrapper">
-      <div class="table-meta">
-        <p>共 {{ summary.totalRows }} 行 / {{ summary.columns }} 列</p>
-        <p v-if="summary.filteredRows !== summary.totalRows">
-          已筛选出 {{ summary.filteredRows }} 行
-        </p>
-      </div>
-      <div class="table-scroll" role="region" aria-live="polite">
-        <table>
-          <thead>
-            <tr>
-              <th v-for="(header, index) in normalizedHeaders" :key="`header-${index}`">
-                {{ header }}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="!filteredRows.length">
-              <td :colspan="Math.max(normalizedHeaders.length, 1)">
-                没有匹配的数据，请更换关键字或重置筛选。
-              </td>
-            </tr>
-            <tr v-for="(row, rowIndex) in filteredRows" :key="`row-${rowIndex}`">
-              <td
-                v-for="(cell, cellIndex) in row"
-                :key="`cell-${rowIndex}-${cellIndex}`"
-              >
-                {{ formatCell(cell) }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <p v-else class="placeholder-text">
-      上传 Excel 文件后，这里将呈现解析结果并支持导出与筛选。
-    </p>
   </section>
 </template>
