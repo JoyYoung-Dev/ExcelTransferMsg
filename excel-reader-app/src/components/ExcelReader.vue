@@ -261,26 +261,198 @@ function formatBytes(bytes) {
 }
 
 function buildResultText(info, workbookSheets) {
-  if (!info || !workbookSheets?.length) {
+  if (!workbookSheets?.length) {
+    return info ? `未能从 ${info.name} 提取到数据。` : '';
+  }
+
+  const sections = workbookSheets
+    .map((sheet) => ({
+      name: sheet.name,
+      content: buildSectionFromSheet(sheet)
+    }))
+    .filter((entry) => entry.content);
+
+  if (sections.length) {
+    const shouldShowSheetLabel = sections.length > 1 || workbookSheets.length > 1;
+    return sections
+      .map((entry) => (shouldShowSheetLabel ? `【${entry.name}】
+${entry.content}` : entry.content))
+      .join('\n\n');
+  }
+
+  return info ? `未能从 ${info.name} 解析出符合规则的内容。` : '';
+}
+
+function buildSectionFromSheet(sheet) {
+  const rows = sheet.rows ?? [];
+  const H_INDEX = 7;
+  const I_INDEX = 8;
+
+  let dateRowIndex = -1;
+  let dateLabel = '';
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const candidate = rows[rowIndex]?.[H_INDEX];
+    if (looksLikeDateCell(candidate)) {
+      dateLabel = formatDateLabel(candidate);
+      dateRowIndex = rowIndex;
+      break;
+    }
+  }
+
+  if (!dateLabel) {
     return '';
   }
-  const sheetSummary = workbookSheets
-    .map((sheet, index) => {
-      const rowCount = Math.max(sheet.rows.length - 1, 0);
-      const columnCount = sheet.rows[0]?.length ?? 0;
-      return `${index + 1}. ${sheet.name}：${rowCount} 行，${columnCount} 列`;
-    })
-    .join('\n');
-  return [
-    '【Excel 解析结果】',
-    `文件：${info.name}`,
-    `大小：${info.sizeLabel}`,
-    `工作表：${info.sheetCount} 个`,
-    `最近修改：${info.lastModifiedLabel}`,
-    '',
-    '工作表概览：',
-    sheetSummary || '无可展示的数据。'
-  ].join('\n');
+
+  let headerRowIndex = -1;
+  if (dateRowIndex > 0) {
+    for (let rowIndex = dateRowIndex - 1; rowIndex >= 0; rowIndex -= 1) {
+      const candidateRow = rows[rowIndex] ?? [];
+      const hasStoreLabel = candidateRow
+        .slice(I_INDEX)
+        .some((cell) => sanitizeHeaderCell(cell));
+      if (hasStoreLabel) {
+        headerRowIndex = rowIndex;
+        break;
+      }
+    }
+  }
+  if (headerRowIndex === -1 && dateRowIndex > 0) {
+    headerRowIndex = dateRowIndex - 1;
+  }
+  const headerRow = headerRowIndex >= 0 ? rows[headerRowIndex] ?? [] : [];
+  const stores = [];
+
+  if (headerRow.length) {
+    for (let colIndex = I_INDEX; colIndex < headerRow.length; colIndex += 1) {
+      const label = sanitizeHeaderCell(headerRow[colIndex]);
+      if (!label) {
+        break;
+      }
+      stores.push({ name: label, columnIndex: colIndex, items: [] });
+    }
+  }
+
+  if (!stores.length) {
+    return dateLabel;
+  }
+
+  let hasStartedProducts = false;
+
+  for (let rowIndex = dateRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    const productName = sanitizeProductName(rows[rowIndex]?.[H_INDEX]);
+    if (!productName) {
+      if (hasStartedProducts) {
+        break;
+      }
+      continue;
+    }
+
+    hasStartedProducts = true;
+
+    stores.forEach((store) => {
+      const quantity = parseQuantityValue(rows[rowIndex]?.[store.columnIndex]);
+      if (quantity !== null) {
+        store.items.push({ name: productName, quantity });
+      }
+    });
+  }
+
+  const lines = [dateLabel];
+
+  stores.forEach((store) => {
+    if (!store.items.length) {
+      return;
+    }
+    lines.push('');
+    lines.push(store.name);
+    store.items.forEach((item) => {
+      lines.push(`- ${item.name}：${formatQuantity(item.quantity)}`);
+    });
+  });
+
+  return lines.join('\n').trim();
+}
+
+function looksLikeDateCell(value) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (value instanceof Date) {
+    return true;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 10000;
+  }
+  const text = sanitizeText(value);
+  if (!text) {
+    return false;
+  }
+  const datePattern = /(\d{1,4}[\/-]\d{1,2}[\/-]\d{1,4})/;
+  const weekdayPattern = /星期[一二三四五六日天]/;
+  return datePattern.test(text) || weekdayPattern.test(text);
+}
+
+function formatDateLabel(value) {
+  if (value instanceof Date) {
+    return formatDateForDisplay(value);
+  }
+  if (typeof value === 'number' && Number.isFinite(value) && XLSX.SSF?.parse_date_code) {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (parsed) {
+      const date = new Date(parsed.y, parsed.m - 1, parsed.d, parsed.H, parsed.M, parsed.S);
+      return formatDateForDisplay(date);
+    }
+  }
+  const text = sanitizeText(value);
+  if (!text) {
+    return '';
+  }
+  return text.replace(/[\s　]+/g, ' ').trim();
+}
+
+function formatDateForDisplay(date) {
+  return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' });
+}
+
+function sanitizeHeaderCell(value) {
+  return sanitizeText(value);
+}
+
+function sanitizeProductName(value) {
+  return sanitizeText(value);
+}
+
+function sanitizeText(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value).replace(/[\r\n\t]+/g, '').trim();
+}
+
+function parseQuantityValue(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 0 ? value : null;
+  }
+  const text = String(value).replace(/[\s,]/g, '');
+  if (!text) {
+    return null;
+  }
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function formatQuantity(value) {
+  if (Number.isInteger(value)) {
+    return `${value}`;
+  }
+  return `${Number(value.toFixed(2))}`;
 }
 
 function formatCell(value) {
