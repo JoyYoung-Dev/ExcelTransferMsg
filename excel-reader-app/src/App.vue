@@ -37,12 +37,12 @@
           </button>
         </header>
         <textarea
-          :value="resultText"
+          v-model="resultText"
           class="guide-card__editor"
           rows="16"
           aria-label="转换结果文本"
           placeholder="解析 Excel 后将在此生成标准文本，方便复制分享。"
-          readonly
+          @input="handleManualEdit"
         ></textarea>
       </section>
     </main>
@@ -63,6 +63,11 @@ let copyTimer;
 
 function handleResultText(text) {
   resultText.value = text ?? '';
+  copySuccess.value = false;
+  clearTimeout(copyTimer);
+}
+
+function handleManualEdit() {
   copySuccess.value = false;
   clearTimeout(copyTimer);
 }
