@@ -390,6 +390,8 @@ function findNextDateRow(rows, start, end, hIndex) {
   return -1;
 }
 
+
+
 function buildBlockFromDate(rows, dateRowIndex, lastRowIndex, H_INDEX, I_INDEX) {
   const dateLabel = formatDateLabel(rows[dateRowIndex]?.[H_INDEX]);
   if (!dateLabel) {
@@ -405,15 +407,16 @@ function buildBlockFromDate(rows, dateRowIndex, lastRowIndex, H_INDEX, I_INDEX) 
   let hasStartedProducts = false;
   let nextRowPointer = dateRowIndex + 1;
 
-  for (let rowIndex = dateRowIndex + 1; rowIndex <= lastRowIndex; rowIndex += 1) {
+  for (let rowIndex = dateRowIndex; rowIndex <= lastRowIndex; rowIndex += 1) {
     const cellValue = rows[rowIndex]?.[H_INDEX];
+    const isDateCell = looksLikeDateCell(cellValue);
 
-    if (looksLikeDateCell(cellValue)) {
+    if (isDateCell && rowIndex !== dateRowIndex) {
       nextRowPointer = rowIndex;
       break;
     }
 
-    const productName = sanitizeProductName(cellValue);
+    const productName = resolveProductName(rows[rowIndex], H_INDEX);
     if (!productName) {
       nextRowPointer = rowIndex + 1;
       continue;
@@ -440,13 +443,38 @@ function buildBlockFromDate(rows, dateRowIndex, lastRowIndex, H_INDEX, I_INDEX) 
       const entries = store.items
         .map((item) => `- ${item.name}：${formatQuantity(item.quantity)} pcs`)
         .join('\n');
-      return `${store.name}
-${entries}`;
+      return `${store.name}\n${entries}`;
     });
 
   const content = [dateLabel, ...storeSections].join('\n').trim();
 
   return { content, nextRow: nextRowPointer };
+}
+
+function resolveProductName(row, H_INDEX) {
+  if (!row) {
+    return '';
+  }
+  const hValue = row[H_INDEX];
+  if (hValue && !looksLikeDateCell(hValue)) {
+    const normalized = sanitizeProductName(hValue);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const fallbackColumns = [H_INDEX - 1, 1];
+  for (const columnIndex of fallbackColumns) {
+    if (columnIndex < 0) {
+      continue;
+    }
+    const fallbackValue = sanitizeProductName(row[columnIndex]);
+    if (fallbackValue) {
+      return fallbackValue;
+    }
+  }
+
+  return '';
 }
 
 function findHeaderRowIndex(rows, dateRowIndex, I_INDEX) {
