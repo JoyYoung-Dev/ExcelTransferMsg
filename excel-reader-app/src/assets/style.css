@@ -148,12 +148,12 @@ h1, h2, h3, h4 {
 
 .status-chip--warning {
   color: var(--warning);
-  background: rgba(249, 115, 22, 0.15);
+  background: transparent;
 }
 
 .status-chip--danger {
   color: var(--danger);
-  background: rgba(239, 68, 68, 0.15);
+  background: transparent;
 }
 
 .status-chip--info {
