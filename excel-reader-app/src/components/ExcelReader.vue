@@ -360,18 +360,14 @@ function buildSectionFromSheet(sheet) {
 
   const lines = [dateLabel];
 
-  stores.forEach((store) => {
-    if (!store.items.length) {
-      return;
-    }
-    lines.push('');
-    lines.push(store.name);
-    store.items.forEach((item) => {
-      lines.push(`- ${item.name}：${formatQuantity(item.quantity)}`);
+  const storeSections = stores
+    .filter((store) => store.items.length)
+    .map((store) => {
+      const entries = store.items.map((item) => `- ${item.name}：${formatQuantity(item.quantity)} pcs`).join('\n');
+      return `${store.name}\n${entries}`;
     });
-  });
 
-  return lines.join('\n').trim();
+  return [dateLabel, ...storeSections].join('\n').trim();
 }
 
 function looksLikeDateCell(value) {
