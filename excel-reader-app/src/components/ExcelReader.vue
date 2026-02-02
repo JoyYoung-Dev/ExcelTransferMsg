@@ -377,8 +377,7 @@ function buildSectionFromSheet(sheet) {
     return '';
   }
 
-  const rangeLabel = `H列范围：H${firstRowIndex + 1} - H${lastRowIndex + 1}`;
-  return [rangeLabel, ...sections].join('\n').trim();
+  return sections.join('\n').trim();
 }
 
 function findNextDateRow(rows, start, end, hIndex) {
@@ -417,7 +416,8 @@ function buildBlockFromDate(rows, dateRowIndex, lastRowIndex, H_INDEX, I_INDEX) 
     }
 
     const productName = resolveProductName(rows[rowIndex], H_INDEX);
-    if (!productName) {
+    const normalizedProductName = productName?.trim();
+    if (!normalizedProductName || !isLikelyProductName(normalizedProductName)) {
       nextRowPointer = rowIndex + 1;
       continue;
     }
@@ -428,7 +428,7 @@ function buildBlockFromDate(rows, dateRowIndex, lastRowIndex, H_INDEX, I_INDEX) 
     stores.forEach((store) => {
       const quantity = parseQuantityValue(rows[rowIndex]?.[store.columnIndex]);
       if (quantity !== null) {
-        store.items.push({ name: productName, quantity });
+        store.items.push({ name: normalizedProductName, quantity });
       }
     });
   }
@@ -565,6 +565,13 @@ function sanitizeHeaderCell(value) {
 
 function sanitizeProductName(value) {
   return sanitizeText(value);
+}
+
+function isLikelyProductName(name) {
+  if (!name) {
+    return false;
+  }
+  return !/^\d+(?:\.\d+)?$/.test(name);
 }
 
 function sanitizeText(value) {
