@@ -463,6 +463,10 @@ function resolveProductName(row, H_INDEX) {
     }
   }
 
+  if (rowHasDataBeforeColumn(row, H_INDEX)) {
+    return '';
+  }
+
   const fallbackColumns = [H_INDEX - 1, 1];
   for (const columnIndex of fallbackColumns) {
     if (columnIndex < 0) {
@@ -475,6 +479,18 @@ function resolveProductName(row, H_INDEX) {
   }
 
   return '';
+}
+
+function rowHasDataBeforeColumn(row, limitIndex) {
+  if (!row || limitIndex <= 0) {
+    return false;
+  }
+  for (let columnIndex = 0; columnIndex < limitIndex; columnIndex += 1) {
+    if (sanitizeText(row[columnIndex])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function findHeaderRowIndex(rows, dateRowIndex, I_INDEX) {
