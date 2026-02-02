@@ -377,7 +377,7 @@ function buildSectionFromSheet(sheet) {
     return '';
   }
 
-  return sections.join('\n').trim();
+  return sections.join('\n\n').trim();
 }
 
 function findNextDateRow(rows, start, end, hIndex) {
